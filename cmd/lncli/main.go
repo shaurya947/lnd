@@ -485,6 +485,7 @@ func main() {
 		getStateCommand,
 		deletePaymentsCommand,
 		sendCustomCommand,
+		sendChannelErrorCommand,
 		subscribeCustomCommand,
 		fishCompletionCommand,
 		listAliasesCommand,
