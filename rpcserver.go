@@ -2169,6 +2169,15 @@ func (r *rpcServer) parseOpenChannelReq(in *lnrpc.OpenChannelRequest,
 			in.CommitmentType)
 	}
 
+	// We restrict the max length of the channel memo to 500 characters so
+	// as to set a reasonable limit on the storage space consumption. This
+	// also mimics the length limit enforced for a TX label.
+	const maxMemoLength = 500
+	if len(in.Memo) > maxMemoLength {
+		return nil, fmt.Errorf("provided memo (%s) is of length %d, "+
+			"exceeds %d", in.Memo, len(in.Memo), maxMemoLength)
+	}
+
 	// Instruct the server to trigger the necessary events to attempt to
 	// open a new channel. A stream is returned in place, this stream will
 	// be used to consume updates of the state of the pending channel.
