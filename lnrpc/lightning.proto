@@ -1601,6 +1601,16 @@ enum Initiator {
     INITIATOR_BOTH = 3;
 }
 
+message ListHTLCHash {
+    repeated bytes hash = 1;
+}
+
+message LocalForceCloseInfo {
+    bool user_initiated = 1;
+    string link_failure_error = 2;
+    map<string, ListHTLCHash> htlc_actions = 3;
+}
+
 message ChannelCloseSummary {
     // The outpoint (txid:index) of the funding transaction.
     string channel_point = 1;
@@ -1667,6 +1677,8 @@ message ChannelCloseSummary {
 
     //  The confirmed SCID for a zero-conf channel.
     uint64 zero_conf_confirmed_scid = 15 [jstype = JS_STRING];
+
+    LocalForceCloseInfo local_force_close_info = 16;
 }
 
 enum ResolutionType {

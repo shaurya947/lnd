@@ -870,6 +870,9 @@ func (c *ChannelArbitrator) stateStep(
 		// next state, as we still need to broadcast the commitment
 		// transaction.
 		case chainTrigger:
+			c.log.LogLocalForceCloseInfo(LocalForceCloseInfo{
+				HtlcActions: chainActions,
+			})
 			fallthrough
 		case userTrigger:
 			nextState = StateBroadcastCommit
@@ -2658,6 +2661,23 @@ func (c *ChannelArbitrator) channelAttendant(bestHeight int32) {
 			// case we must manually re-trigger the state
 			// transition into StateContractClosed based on the
 			// close status of the channel.
+
+			localFCInfo, err := c.log.FetchLocalForceCloseInfo()
+			if localFCInfo != nil && err == nil {
+				htlcMap := make(map[string][]channeldb.HTLC)
+				for action, htlcs := range localFCInfo.HtlcActions {
+					htlcMap[action.String()] = htlcs
+				}
+
+				dbLocalFCInfo := &channeldb.LocalForceCloseInfo{
+					UserRequested:    localFCInfo.UserRequested,
+					LinkFailureError: localFCInfo.LinkFailureError,
+					HtlcActions:      htlcMap,
+				}
+				closeInfo.ChannelCloseSummary.LocalFCInfo =
+					dbLocalFCInfo
+			}
+
 			err = c.cfg.MarkChannelClosed(
 				closeInfo.ChannelCloseSummary,
 				channeldb.ChanStatusLocalCloseInitiator,

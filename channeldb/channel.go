@@ -3121,6 +3121,12 @@ const (
 	Abandoned ClosureType = 5
 )
 
+type LocalForceCloseInfo struct {
+	UserRequested    bool
+	LinkFailureError string
+	HtlcActions      map[string][]HTLC
+}
+
 // ChannelCloseSummary contains the final state of a channel at the point it
 // was closed. Once a channel is closed, all the information pertaining to that
 // channel within the openChannelBucket is deleted, and a compact summary is
@@ -3200,6 +3206,8 @@ type ChannelCloseSummary struct {
 	// LastChanSyncMsg is the ChannelReestablish message for this channel
 	// for the state at the point where it was closed.
 	LastChanSyncMsg *lnwire.ChannelReestablish
+
+	LocalFCInfo *LocalForceCloseInfo
 }
 
 // CloseChannel closes a previously active Lightning channel. Closing a channel
@@ -3579,6 +3587,18 @@ func serializeChannelCloseSummary(w io.Writer, cs *ChannelCloseSummary) error {
 		}
 	}
 
+	// Write whether the local force close info is present.
+	if err := WriteElements(w, cs.LocalFCInfo != nil); err != nil {
+		return err
+	}
+
+	// Write the local force close info, if present.
+	if cs.LocalFCInfo != nil {
+		if err := writeLocalFCInfo(w, cs.LocalFCInfo); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -3660,6 +3680,25 @@ func deserializeCloseChannelSummary(r io.Reader) (*ChannelCloseSummary, error) {
 		c.LastChanSyncMsg = chanSync
 	}
 
+	// Check if we have local force close info to read
+	var hasLocalFCInfo bool
+	err = ReadElements(r, &hasLocalFCInfo)
+	if errors.Is(err, io.EOF) {
+		return c, nil
+	} else if err != nil {
+		return nil, err
+	}
+
+	// If local force close info is present, read it.
+	if hasLocalFCInfo {
+		var localFCInfo LocalForceCloseInfo
+		err = readLocalFCInfo(r, &localFCInfo)
+		if err != nil {
+			return nil, err
+		}
+		c.LocalFCInfo = &localFCInfo
+	}
+
 	return c, nil
 }
 
@@ -3670,6 +3709,28 @@ func writeChanConfig(b io.Writer, c *ChannelConfig) error {
 		c.RevocationBasePoint, c.PaymentBasePoint, c.DelayBasePoint,
 		c.HtlcBasePoint,
 	)
+}
+
+func writeLocalFCInfo(b io.Writer, info *LocalForceCloseInfo) error {
+	err := WriteElements(b, info.UserRequested,
+		[]byte(info.LinkFailureError), uint8(len(info.HtlcActions)))
+	if err != nil {
+		return err
+	}
+
+	for action, htlcs := range info.HtlcActions {
+		err = WriteElement(b, []byte(action))
+		if err != nil {
+			return err
+		}
+
+		err = SerializeHtlcs(b, htlcs...)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // fundingTxPresent returns true if expect the funding transcation to be found
@@ -3876,6 +3937,37 @@ func readChanConfig(b io.Reader, c *ChannelConfig) error {
 		&c.PaymentBasePoint, &c.DelayBasePoint,
 		&c.HtlcBasePoint,
 	)
+}
+
+func readLocalFCInfo(b io.Reader, info *LocalForceCloseInfo) error {
+	var (
+		linkErrorBytes []byte
+		numHtlcMapKeys uint8
+	)
+	err := ReadElements(b, &info.UserRequested, &linkErrorBytes,
+		&numHtlcMapKeys)
+	if err != nil {
+		return err
+	}
+
+	info.LinkFailureError = string(linkErrorBytes)
+	info.HtlcActions = make(map[string][]HTLC)
+	for i := uint8(0); i < numHtlcMapKeys; i++ {
+		var actionBytes []byte
+		err = ReadElements(b, &actionBytes)
+		if err != nil {
+			return err
+		}
+
+		htlcs, err := DeserializeHtlcs(b)
+		if err != nil {
+			return err
+		}
+
+		info.HtlcActions[string(actionBytes)] = htlcs
+	}
+
+	return nil
 }
 
 func fetchChanInfo(chanBucket kvdb.RBucket, channel *OpenChannel) error {

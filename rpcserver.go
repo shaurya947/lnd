@@ -2495,6 +2495,7 @@ func (r *rpcServer) CloseChannel(in *lnrpc.CloseChannelRequest,
 		chainArbitrator := r.server.chainArb
 		closingTx, err := chainArbitrator.ForceCloseContract(
 			*chanPoint,
+			contractcourt.UserRequestedForceClose,
 		)
 		if err != nil {
 			rpcsLog.Errorf("unable to force close transaction: %v", err)
@@ -4479,6 +4480,26 @@ func (r *rpcServer) createRPCClosedChannel(
 		}
 
 		channel.Resolutions = append(channel.Resolutions, rpcResolution)
+	}
+
+	if dbChannel.LocalFCInfo != nil {
+		localFCInfo := dbChannel.LocalFCInfo
+		htlcActions := make(map[string]*lnrpc.ListHTLCHash)
+		for action, htlcs := range localFCInfo.HtlcActions {
+			htlcHashes := make([][]byte, len(htlcs))
+			for i, htlc := range htlcs {
+				htlcHashes[i] = htlc.RHash[:]
+			}
+			htlcHashList := &lnrpc.ListHTLCHash{
+				Hash: htlcHashes,
+			}
+			htlcActions[action] = htlcHashList
+		}
+		channel.LocalForceCloseInfo = &lnrpc.LocalForceCloseInfo{
+			UserInitiated:    localFCInfo.UserRequested,
+			LinkFailureError: localFCInfo.LinkFailureError,
+			HtlcActions:      htlcActions,
+		}
 	}
 
 	return channel, nil

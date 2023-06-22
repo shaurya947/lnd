@@ -1056,13 +1056,28 @@ type forceCloseReq struct {
 	closeTx chan *wire.MsgTx
 }
 
+type forceCloseContractOption func(*ChannelArbitrator)
+
+func UserRequestedForceClose(ca *ChannelArbitrator) {
+	ca.log.LogLocalForceCloseInfo(LocalForceCloseInfo{UserRequested: true})
+}
+
+func LinkFailureErrorForceClose(errorMsg string) forceCloseContractOption {
+	return func(ca *ChannelArbitrator) {
+		ca.log.LogLocalForceCloseInfo(LocalForceCloseInfo{
+			LinkFailureError: errorMsg,
+		})
+	}
+}
+
 // ForceCloseContract attempts to force close the channel infield by the passed
 // channel point. A force close will immediately terminate the contract,
 // causing it to enter the resolution phase. If the force close was successful,
 // then the force close transaction itself will be returned.
 //
 // TODO(roasbeef): just return the summary itself?
-func (c *ChainArbitrator) ForceCloseContract(chanPoint wire.OutPoint) (*wire.MsgTx, error) {
+func (c *ChainArbitrator) ForceCloseContract(chanPoint wire.OutPoint,
+	opt forceCloseContractOption) (*wire.MsgTx, error) {
 	c.Lock()
 	arbitrator, ok := c.activeChannels[chanPoint]
 	c.Unlock()
@@ -1071,6 +1086,7 @@ func (c *ChainArbitrator) ForceCloseContract(chanPoint wire.OutPoint) (*wire.Msg
 	}
 
 	log.Infof("Attempting to force close ChannelPoint(%v)", chanPoint)
+	opt(arbitrator)
 
 	// Before closing, we'll attempt to send a disable update for the
 	// channel. We do so before closing the channel as otherwise the current

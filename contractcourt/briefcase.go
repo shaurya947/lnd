@@ -53,6 +53,12 @@ func (c *ContractResolutions) IsEmpty() bool {
 		c.AnchorResolution == nil && c.BreachResolution == nil
 }
 
+type LocalForceCloseInfo struct {
+	UserRequested    bool
+	LinkFailureError string
+	HtlcActions      ChainActionMap
+}
+
 // ArbitratorLog is the primary source of persistent storage for the
 // ChannelArbitrator. The log stores the current state of the
 // ChannelArbitrator's internal state machine, any items that are required to
@@ -118,6 +124,10 @@ type ArbitratorLog interface {
 	// channels in the process of closing before the CommitSet struct was
 	// introduced.
 	FetchChainActions() (ChainActionMap, error)
+
+	LogLocalForceCloseInfo(LocalForceCloseInfo) error
+
+	FetchLocalForceCloseInfo() (*LocalForceCloseInfo, error)
 
 	// WipeHistory is to be called ONLY once *all* contracts have been
 	// fully resolved, and the channel closure if finalized. This method
@@ -363,6 +373,8 @@ var (
 	// store the confirmed active HTLC sets once we learn that a channel
 	// has closed out on chain.
 	commitSetKey = []byte("commit-set")
+
+	localForceCloseInfoKey = []byte("local-force-close-info")
 )
 
 var (
@@ -1006,6 +1018,124 @@ func (b *boltArbitratorLog) FetchChainActions() (ChainActionMap, error) {
 	}
 
 	return actionsMap, nil
+}
+
+func (b *boltArbitratorLog) LogLocalForceCloseInfo(
+	info LocalForceCloseInfo) error {
+	return kvdb.Update(b.db, func(tx kvdb.RwTx) error {
+		scopeBucket, err := tx.CreateTopLevelBucket(b.scopeKey[:])
+		if err != nil {
+			return err
+		}
+
+		b := new(bytes.Buffer)
+
+		// first byte is UserRequested bool
+		err = binary.Write(b, endian, info.UserRequested)
+		if err != nil {
+			return err
+		}
+
+		// second byte is length of LinkFailureError string
+		err = binary.Write(b, endian, uint8(len(info.LinkFailureError)))
+		if err != nil {
+			return err
+		}
+
+		// next bytes are the actual LinkFailureError string
+		_, err = b.WriteString(info.LinkFailureError)
+		if err != nil {
+			return err
+		}
+
+		// next byte is number of key:value pairs in HtlcActions map
+		err = binary.Write(b, endian, uint8(len(info.HtlcActions)))
+
+		// next bytes are actual map data
+		for action, htlcs := range info.HtlcActions {
+			err = binary.Write(b, endian, action)
+			if err != nil {
+				return err
+			}
+
+			err = channeldb.SerializeHtlcs(b, htlcs...)
+			if err != nil {
+				return err
+			}
+		}
+
+		return scopeBucket.Put(localForceCloseInfoKey, b.Bytes())
+	}, func() {})
+}
+
+func (b *boltArbitratorLog) FetchLocalForceCloseInfo() (*LocalForceCloseInfo,
+	error) {
+	info := &LocalForceCloseInfo{
+		HtlcActions: make(ChainActionMap),
+	}
+	infoExists := false
+	err := kvdb.View(b.db, func(tx kvdb.RTx) error {
+		scopeBucket := tx.ReadBucket(b.scopeKey[:])
+		if scopeBucket == nil {
+			return errScopeBucketNoExist
+		}
+
+		infoBytes := scopeBucket.Get(localForceCloseInfoKey)
+		if len(infoBytes) == 0 {
+			return nil
+		}
+
+		infoExists = true
+		infoReader := bytes.NewReader(infoBytes)
+		userRequested := new(bool)
+		err := binary.Read(infoReader, endian, userRequested)
+		if err != nil {
+			return err
+		}
+		info.UserRequested = *userRequested
+
+		linkFailureErrorLength := new(uint8)
+		err = binary.Read(infoReader, endian, linkFailureErrorLength)
+		if err != nil {
+			return err
+		}
+		linkFailureErrorBytes := make([]byte, *linkFailureErrorLength)
+		_, err = infoReader.Read(linkFailureErrorBytes)
+		info.LinkFailureError = string(linkFailureErrorBytes)
+
+		numActionsKeys := new(uint8)
+		err = binary.Read(infoReader, endian, numActionsKeys)
+		if err != nil {
+			return err
+		}
+		for i := uint8(0); i < *numActionsKeys; i++ {
+			var action ChainAction
+			err = binary.Read(infoReader, endian, &action)
+			if err != nil {
+				return err
+			}
+
+			htlcs, err := channeldb.DeserializeHtlcs(infoReader)
+			if err != nil {
+				return err
+			}
+
+			info.HtlcActions[action] = htlcs
+		}
+
+		return nil
+	}, func() {
+		info = &LocalForceCloseInfo{
+			HtlcActions: make(ChainActionMap),
+		}
+		infoExists = false
+	})
+
+	if err != nil || !infoExists {
+		return nil, err
+	}
+
+	return info, nil
 }
 
 // InsertConfirmedCommitSet stores the known set of active HTLCs at the time

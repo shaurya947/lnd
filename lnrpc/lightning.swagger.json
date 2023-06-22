@@ -3866,6 +3866,9 @@
           "type": "string",
           "format": "uint64",
           "description": "The confirmed SCID for a zero-conf channel."
+        },
+        "local_force_close_info": {
+          "$ref": "#/definitions/lnrpcLocalForceCloseInfo"
         }
       }
     },
@@ -5357,6 +5360,18 @@
         }
       }
     },
+    "lnrpcListHTLCHash": {
+      "type": "object",
+      "properties": {
+        "hash": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "byte"
+          }
+        }
+      }
+    },
     "lnrpcListInvoiceResponse": {
       "type": "object",
       "properties": {
@@ -5452,6 +5467,23 @@
             "$ref": "#/definitions/lnrpcUtxo"
           },
           "title": "A list of utxos"
+        }
+      }
+    },
+    "lnrpcLocalForceCloseInfo": {
+      "type": "object",
+      "properties": {
+        "user_initiated": {
+          "type": "boolean"
+        },
+        "link_failure_error": {
+          "type": "string"
+        },
+        "htlc_actions": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/lnrpcListHTLCHash"
+          }
         }
       }
     },
